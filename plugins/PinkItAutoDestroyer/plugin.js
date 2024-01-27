@@ -153,6 +153,7 @@ async function pinkIt() {
 	dieingPlanet = null;
 	pinkItIsRunning = false;
 	stopPinkIt = false;
+	setChoosenPlanets();
 }
 
 function setExcludeOwnedPlanets(onOrOff) {
