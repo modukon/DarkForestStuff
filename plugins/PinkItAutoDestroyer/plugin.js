@@ -64,14 +64,14 @@ function percentToStrHexColor(percent) {
 	return intToStrHexColor(parseInt(percent*255));
 }
 function getPlanetRingRadius(planet, multiplier=1.3, min=minDrawPlanetRadius) {
-    const viewport = ui.getViewport();
+	const viewport = ui.getViewport();
 	let radius = viewport.worldToCanvasDist(ui.getRadiusOfPlanetLevel(planet.planetLevel));
 	radius *= multiplier;
 	if (radius < min) radius = min;
 	return radius;
 }
 function drawRingAnimationOnPlanet(ctx, planet, level, color, reverse=false) {
-    const viewport = ui.getViewport();
+	const viewport = ui.getViewport();
 	const { x: planetX, y: planetY } = viewport.worldToCanvasCoords(planet.location.coords);
 
 	let radius = getPlanetRingRadius(planet);
@@ -175,12 +175,12 @@ function Plugin() {
 
 	o.container = null;
 
-    o.init = function() {
+	o.init = function() {
 		window.addEventListener("click", onMouseClick);
 		setChoosenPlanets();
 	}
 
-    o.render = function(container) {
+	o.render = function(container) {
 		container.width = "400px";
 		o.container = container;
 		let div = document.createElement("div");
@@ -233,11 +233,11 @@ function Plugin() {
 			}
 		});
 		container.append(button);
-    }
+	}
 
-    o.draw = function(ctx) {
+	o.draw = function(ctx) {
 		o.drawAllRings(ctx);
-    }
+	}
 	
 	o.drawAllRings = function(ctx) {
 		if (dieingPlanet) {
@@ -251,26 +251,26 @@ function Plugin() {
 		}
 	}
 
-    o.drawRingAroundPlanet = function(planet, ctx, color='#60A') {
-        const viewport = ui.getViewport();
+	o.drawRingAroundPlanet = function(planet, ctx, color='#60A') {
+		const viewport = ui.getViewport();
 
-        // planet coordinates relative to the player
-        const { x: planetX, y: planetY } = viewport.worldToCanvasCoords(planet.location.coords);
+		// planet coordinates relative to the player
+		const { x: planetX, y: planetY } = viewport.worldToCanvasCoords(planet.location.coords);
 
-        // planet radius in px
-        var planetCtxPixelRadius = viewport.worldToCanvasDist(ui.getRadiusOfPlanetLevel(planet.planetLevel));
+		// planet radius in px
+		var planetCtxPixelRadius = viewport.worldToCanvasDist(ui.getRadiusOfPlanetLevel(planet.planetLevel));
 		planetCtxPixelRadius *= 0.75;
 		if (planetCtxPixelRadius < minCircleSizePx) planetCtxPixelRadius = minCircleSizePx;
 
-        ctx.beginPath();
-        ctx.strokeStyle = color;
-        ctx.fillStyle = color;
-        ctx.arc(planetX, planetY, planetCtxPixelRadius*2, 0, Math.PI * 2, false);
-        ctx.arc(planetX, planetY, planetCtxPixelRadius*2-circleThickness, 0, Math.PI * 2, true);
-        ctx.fill();
-    }
+		ctx.beginPath();
+		ctx.strokeStyle = color;
+		ctx.fillStyle = color;
+		ctx.arc(planetX, planetY, planetCtxPixelRadius*2, 0, Math.PI * 2, false);
+		ctx.arc(planetX, planetY, planetCtxPixelRadius*2-circleThickness, 0, Math.PI * 2, true);
+		ctx.fill();
+	}
 
-    o.destroy = function() {
+	o.destroy = function() {
 		stopPinkIt = true;
 		window.removeEventListener("click", o.onMouseClick);
 	}
@@ -280,18 +280,18 @@ function Plugin() {
 }
 
 class PinkIt {
-    constructor() {
+	constructor() {
 		this.plugin = Plugin();
-    }
-    render(div) {
+	}
+	render(div) {
 		this.plugin.render(div);
-    }
-    draw(ctx) {
+	}
+	draw(ctx) {
 		this.plugin.draw(ctx);
 	}
-    destroy() {
+	destroy() {
 		this.plugin.destroy();
-    }
+	}
 }
 
 export default PinkIt;
