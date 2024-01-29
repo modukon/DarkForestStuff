@@ -1,13 +1,22 @@
 
-// made for DF Archon Ares v0.1 Round 2
-// can be used to automatically destroy all planets inside the pink circle (using dropped bomb from the pink ship)
+/*
+	made for DF Archon Ares v0.1 Round 2
+	https://mirror.xyz/dfarchon.eth/hns4_mHAdUvPVDLrnCVxxlg1MrxpQMDgPTHsBgLXhRw
+	
+	features:
+	- can automatically destroy all planets inside the pink circle (using dropped bomb from the pink ship)
+	- shows a list of all pink circles in view and their owners/operators
+	- click any planet to see how big a pink circle would be if a bomb were dropped on it
+*/
 
-const pluginName = "PinkItAutoDestroyer";
+const pluginName = "Pink It";
+
+const simulate = false; // for testing purposes this can be set to true (if true it wont destroy planets)
 
 const cSpace = "&nbsp;"
 const minCircleSizePx = 5;
 const minDrawPlanetRadius = 20;
-const circleThickness = 3;
+const circleThickness = 2;
 const PI2 = Math.PI * 2;
 
 const pinkCircleRadius = 2000;
@@ -18,7 +27,20 @@ let deadPlanets = [];
 let dieingPlanet = null;
 let stopPinkIt = false;
 let excludeMyPlanets = true;
-let excludeOwnedPlanets = true;
+let excludeOwnedPlanets = false;
+let pinkItIsRunning = false;
+let butPinkIt = null;
+let butPinkItIsReady = false;
+let myPinkZone = null;
+let hlPinkZoneCounter = 0;
+const hlPinkZoneCounterMax = 200;
+let lastSelectedPlanet = null;
+let tablePinkZoneList = null;
+let intervUpdateTablePZList = null;
+let lastWorldCoords = null;
+let pzHoveringInList = null;
+
+import { getPlayerColor } from "https://cdn.skypack.dev/@darkforest_eth/procedural";
 
 function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -53,6 +75,48 @@ function createToggleButton(text, onClick, onOrOff=false) {
 		onClick(button.onOrOff);
 	});
 	return button;
+}
+
+function FullButtonLine(buttons) {
+	let table = document.createElement("table");
+	table.style.textAlign = "center";
+	table.style.width = "100%";
+	table.style.tableLayout = "fixed"; // to make all buttons the same width
+	for (let i=0; i < buttons.length; ++i) {
+		let b = buttons[i];
+		let td = document.createElement("td");
+		let ele = b.element ? b.element : b;
+		ele.style.border =  "1px solid white";
+		ele.style.width = "100%";
+		td.style.width = "100%"; // to make all buttons the same width
+		td.style.padding = "5px";
+		if (i !== 0) td.style.paddingLeft = "0px";
+		td.append(ele);
+		table.append(td);
+	}
+	return table;
+}
+
+function createTableHeader(table, strArr) {
+	var tr = document.createElement('tr');
+	for (var str of strArr) {
+		var th = document.createElement('th');
+		th.innerText = str;
+		th.style.border = "1px solid white";
+		tr.appendChild(th);
+	}
+	table.appendChild(tr);
+}
+
+function addAsTd(tr, text, width=null, color=null, center=true) {
+	var td = document.createElement('td');
+	td.style.border = "1px solid white";
+	td.innerHTML = text;
+	if (width) td.width = width+"px";
+	if (color) td.style.color = color;
+	if (center) td.style["text-align"] = "center";
+	tr.appendChild(td);
+	return td;
 }
 
 function intToStrHexColor(num) {
@@ -105,8 +169,71 @@ function drawRing2(ctx, x, y, radius, thickness=0.8, color) {
 	ctx.fill();
 }
 
+function drawPinkZone(ctx, coords, color="#FFF") {
+	const viewport = ui.getViewport();
+	const { x, y } = viewport.worldToCanvasCoords(coords);
+	const radius = viewport.worldToCanvasDist(pinkCircleRadius);
+	ctx.beginPath();
+	ctx.fillStyle = color;
+	ctx.arc(x, y, radius, 0, PI2, false);
+	ctx.fill();
+}
+
+function drawHlPinkZone(ctx) {
+	if (hlPinkZoneCounter <= 0) return;
+	let selectedPlanet = ui.getSelectedPlanet();
+	if (!selectedPlanet) return;
+	let color = "hsla(0, 100%, 40%, "+(hlPinkZoneCounter/hlPinkZoneCounterMax*0.4)+")";
+	drawPinkZone(ctx, selectedPlanet.location.coords, color);
+	hlPinkZoneCounter--;
+}
+
+function drawListHoveringPZ(ctx) {
+	if (!pzHoveringInList) return;
+	let selectedPlanet = ui.getSelectedPlanet();
+//	if (selectedPlanet && pzHoveringInList.locationId === selectedPlanet.locationId) return;
+	let color = "hsla(300, 100%, 40%, 0.7)";
+	drawPinkZone(ctx, pzHoveringInList.coords, color);
+}
+
+function drawButPinkItAnimation() {
+	if (!butPinkIt) return;
+	if (!butPinkItIsReady) return;
+	const hueStart = 0; // orange-red
+	const hueEnd = 55; // yellow
+	const animationSpeed = 500;
+	const t = Date.now()%animationSpeed/animationSpeed;
+	const hue = hueStart + (hueEnd-hueStart)*t;
+	const color = "hsl("+hue+", 100%, 40%)";
+	butPinkIt.style.backgroundColor = color;
+	butPinkIt.style.color = "#000";
+}
+
 function getDistBetweenPlanets(planetA, planetB) {
 	return df.getDistCoords(planetA.location.coords, planetB.location.coords);
+}
+
+function pinkZoneIsInView(pinkZone) {
+	let viewPort = ui.getViewport()
+	if (viewPort.getBottomBound() > pinkZone.coords.y + pinkCircleRadius) return false;
+	if (viewPort.getTopBound() < pinkZone.coords.y - pinkCircleRadius) return false;
+	if (viewPort.getLeftBound() > pinkZone.coords.x + pinkCircleRadius) return false;
+	if (viewPort.getRightBound() < pinkZone.coords.x - pinkCircleRadius) return false;
+	return true;
+}
+
+// returns null of we dont have a pink zone at selected planet
+function getMyPinkZoneAtSelectedPlanet() {
+	let selectedPlanet = ui.getSelectedPlanet();
+	if (!selectedPlanet) return null;
+	myPinkZone = null;
+	for (let pz of df.getMyPinkZones()) {
+		if (pz.locationId === selectedPlanet.locationId) {
+			myPinkZone = pz;
+			break;
+		}
+	}
+	return myPinkZone;
 }
 
 function setChoosenPlanets() {
@@ -114,6 +241,7 @@ function setChoosenPlanets() {
 	let selectedPlanet = ui.getSelectedPlanet();
 	choosenPlanets = [];
 	deadPlanets = [];
+	setPinkItButton();
 	if (!selectedPlanet) return;
 	let planets = df.getAllPlanets();
 	for (let p of planets) {
@@ -125,30 +253,36 @@ function setChoosenPlanets() {
 		if (p.destroyed) deadPlanets.push(p);
 		else choosenPlanets.push(p);
 	}
-//	console.log("found "+choosenPlanets.length+" choosenPlanets and "+deadPlanets.length+" deadPlanets");
+	setPinkItButton();
 }
 
-let pinkItIsRunning = false;
 async function pinkIt() {
+	if (pinkItIsRunning) return;
 	pinkItIsRunning = true;
-	for (let p of choosenPlanets) {
-		if (stopPinkIt) break;
-		if (p.destroyed) continue;
-		console.log("df.pinkLocation('"+p.locationId+"')");
-//		console.log("ui.centerLocationId('"+p.locationId+"')");
-		dieingPlanet = p;
-		try {
-			await df.pinkLocation(p.locationId);
-		} catch (err) {
-			console.error(err);
-		}
-		// we have to wait for planet being destroyed otherwise next df.pinkLocation will fail
-		for (let i=0; i<30; ++i) {
-			if (p.destroyed) break;
-			await sleep(500);
+	await sleep(2000); // give the user 2 seconds to abort before starting to destroy planets
+	if (!stopPinkIt) await go();
+	async function go() {
+		for (let p of choosenPlanets) {
 			if (stopPinkIt) break;
+			if (p.destroyed) continue;
+			dieingPlanet = p;
+			try {
+				console.log("df.pinkLocation('"+p.locationId+"')");
+				if (!simulate) await df.pinkLocation(p.locationId);
+			} catch (err) {
+				console.error(err);
+			}
+			if (simulate) await sleep(3000);
+			else {
+				// we have to wait for planet being destroyed otherwise next df.pinkLocation will fail
+				for (let i=0; i<30; ++i) {
+					if (p.destroyed) break;
+					await sleep(500);
+					if (stopPinkIt) break;
+				}
+			}
+			deadPlanets.push(p);
 		}
-		deadPlanets.push(p);
 	}
 	dieingPlanet = null;
 	pinkItIsRunning = false;
@@ -167,7 +301,124 @@ function setExcludeMyPlanets(onOrOff) {
 }
 
 function onMouseClick() {
+	myPinkZone = getMyPinkZoneAtSelectedPlanet();
+	if (lastSelectedPlanet !== ui.getSelectedPlanet()) {
+		hlPinkZoneCounter = hlPinkZoneCounterMax;
+		setTablePinkZoneList();
+	}
 	setChoosenPlanets();
+	lastSelectedPlanet = ui.getSelectedPlanet();
+}
+
+function setPinkItButton() {
+	if (!butPinkIt) return;
+	butPinkIt.style.color = "#FFF";
+	butPinkIt.style.backgroundColor = "#000";
+	butPinkItIsReady = false;
+	if (!myPinkZone) {
+		butPinkIt.innerHTML = "<b>please select one of your pink zones</b>";
+	} else if (choosenPlanets.length === 0) {
+		butPinkIt.innerHTML = "<b>no destroyable planets found</b>";
+	} else if (pinkItIsRunning) {
+		if (stopPinkIt) butPinkIt.innerHTML = "<b>stopping ...</b>";
+		else butPinkIt.innerHTML = "<b>STOP destroying planets</b>";
+	} else {
+		butPinkIt.innerHTML = "<b>start DESTROYING "+choosenPlanets.length+" planets</b>";
+		butPinkItIsReady = true;
+	}
+}
+
+function onButPinkItClick() {
+	if (!pinkItIsRunning) {
+		if (!ui.getSelectedPlanet()) {
+			console.error("first you have to select a planet");
+			return;
+		}
+		if (!myPinkZone) return;
+		if (choosenPlanets.length === 0) return;
+		pinkIt();
+		setPinkItButton();
+	} else {
+		stopPinkIt = true;
+		setPinkItButton();
+	}
+}
+
+function getPinkZonesInView() {
+	return Array.from(df.getPinkZones()).filter(pinkZoneIsInView);
+}
+
+let planetType = {};
+planetType.PLANET = 0;
+planetType.ASTEROID = 1;
+planetType.FOUNDRY = 2;
+planetType.SPACETIME = 3;
+planetType.QUASAR = 4;
+
+function getPlanetTypeName(planet) {
+	for (let type in planetType)
+		if (planet.planetType === planetType[type]) return type;
+	throw new Error("cannot find planet type name for type '"+planet.planetType+"'");
+}
+
+function getPlanetDesc(planet) {
+	if (typeof planet === "string") planet = df.getPlanetWithId(planet);
+	return "LvL."+planet.planetLevel+" "+getPlanetTypeName(planet);
+}
+
+function setTablePinkZoneList() {
+	if (!tablePinkZoneList) return;
+	tablePinkZoneList.innerHTML = "";
+	let pinkZones = getPinkZonesInView();
+	if (pinkZones.length === 0) return;
+	createTableHeader(tablePinkZoneList, ["twitter", "address", "planet"]);
+	for (let pz of pinkZones) {
+		let tr = document.createElement("tr");
+		let operatorAddress = pz.coords.operator;
+		let player = df.getPlayer(operatorAddress);
+		let playerColor = getPlayerColor(operatorAddress);
+		
+		addAsTd(tr, player.twitter ? player.twitter : "", null, playerColor);
+		addAsTd(tr, operatorAddress.substr(0, 8), null, playerColor);
+		addAsTd(tr, getPlanetDesc(pz.locationId));
+		
+		tr.style.cursor = "pointer";
+		tr.style.backgroundColor = "#000";
+		let selectedPlanet = ui.getSelectedPlanet();
+		if (selectedPlanet && selectedPlanet.locationId === pz.locationId) 
+			tr.style.backgroundColor = "#400";
+		tr.addEventListener('mouseenter', ()=>{
+			tr.style.backgroundColor = "#333";
+			let selectedPlanet = ui.getSelectedPlanet();
+			if (selectedPlanet && selectedPlanet.locationId === pz.locationId) 
+				tr.style.backgroundColor = "#600";
+			pzHoveringInList = pz;
+		});
+		tr.addEventListener('mouseleave', ()=>{
+			tr.style.backgroundColor = "#000";
+			let selectedPlanet = ui.getSelectedPlanet();
+			if (selectedPlanet && selectedPlanet.locationId === pz.locationId) 
+				tr.style.backgroundColor = "#400";
+			pzHoveringInList = null;
+		});
+		tr.addEventListener("click", ()=>{ 
+			ui.centerLocationId(pz.locationId);
+			hlPinkZoneCounter = hlPinkZoneCounterMax;
+			setTablePinkZoneList();
+		});
+		
+		tablePinkZoneList.append(tr);
+	}
+}
+
+function updateTablePinkZoneList() {
+	// we check centerWorldCoords to see if the user moved, only than we update the pinkZoneList table
+	let worldCoords = ui.getViewport().centerWorldCoords;
+	if (!lastWorldCoords) lastWorldCoords = {};
+	else if (worldCoords.x === lastWorldCoords.x && worldCoords.y === lastWorldCoords.y) return;
+	lastWorldCoords.x = worldCoords.x;
+	lastWorldCoords.y = worldCoords.y;
+	setTablePinkZoneList();
 }
 
 function Plugin() {
@@ -175,9 +426,16 @@ function Plugin() {
 
 	o.container = null;
 
+	o.destroy = function() {
+		stopPinkIt = true;
+		clearInterval(intervUpdateTablePZList);
+		window.removeEventListener("click", o.onMouseClick);
+	}
+
 	o.init = function() {
 		window.addEventListener("click", onMouseClick);
 		setChoosenPlanets();
+		intervUpdateTablePZList = setInterval(updateTablePinkZoneList, 330);
 	}
 
 	o.render = function(container) {
@@ -189,54 +447,33 @@ function Plugin() {
 		div.style.textAlign = "center";
 		container.append(div);
 		
-		var div2 = document.createElement("div");
-		div2.innerHTML = cSpace;
-		container.append(div2);
-		
-		let toggleButDiv = document.createElement("div");
-		toggleButDiv.style.textAlign = "center";
-		toggleButDiv.padding = "2px";
-		container.append(toggleButDiv);
-		let butExcludeOwned = createToggleButton("exclude owned planets", setExcludeOwnedPlanets, true);
-		butExcludeOwned.element.style.width = "48%";
-		butExcludeOwned.element.style.padding = "2%";
-		toggleButDiv.append(butExcludeOwned.element);
-		
-		var div2 = document.createElement("div");
-		div2.innerHTML = cSpace;
-		div2.style.display = "inline-block";
-		toggleButDiv.append(div2);
-		
+		let butExcludeOwned = createToggleButton("exclude owned planets", setExcludeOwnedPlanets, false);
 		let butExcludeMine = createToggleButton("exclude my planets", setExcludeMyPlanets, true);
-		butExcludeMine.element.style.width = "48%";
-		butExcludeMine.element.style.padding = "2%";
-		toggleButDiv.append(butExcludeMine.element);
 		
-		var div2 = document.createElement("div");
-		div2.innerHTML = cSpace;
-		container.append(div2);
+		let excludeButLine = FullButtonLine([butExcludeOwned, butExcludeMine]);
+		container.append(excludeButLine);
 		
-		let button = document.createElement('button');
-		button.innerHTML = "PINK IT";
-		button.style.width = "100%";
-   		button.addEventListener('click', ()=> {
-			if (!pinkItIsRunning) {
-				if (!ui.getSelectedPlanet()) {
-					console.error("first you have to select a planet");
-					return;
-				}
-				pinkIt();
-				button.innerHTML = "OH MY GOD! STOP IT NOW!";
-			} else {
-				stopPinkIt = true;
-				button.innerHTML = "PINK IT";
-			}
-		});
-		container.append(button);
+		butPinkIt = document.createElement('button');
+		butPinkIt.style.width = "100%";
+		butPinkIt.style.height = "2.0rem";
+		butPinkIt.style.fontSize = "1.2rem";
+   		butPinkIt.addEventListener('click', onButPinkItClick);
+		setPinkItButton();
+		container.append(butPinkIt);
+		
+		tablePinkZoneList = document.createElement("table");
+		tablePinkZoneList.style.textAlign = "center";
+		tablePinkZoneList.style.width = "100%";
+		tablePinkZoneList.style.marginTop = "5px";
+		setTablePinkZoneList();
+		container.append(tablePinkZoneList);
 	}
 
 	o.draw = function(ctx) {
 		o.drawAllRings(ctx);
+		drawListHoveringPZ(ctx);
+		drawHlPinkZone(ctx);
+		drawButPinkItAnimation();
 	}
 	
 	o.drawAllRings = function(ctx) {
@@ -268,11 +505,6 @@ function Plugin() {
 		ctx.arc(planetX, planetY, planetCtxPixelRadius*2, 0, Math.PI * 2, false);
 		ctx.arc(planetX, planetY, planetCtxPixelRadius*2-circleThickness, 0, Math.PI * 2, true);
 		ctx.fill();
-	}
-
-	o.destroy = function() {
-		stopPinkIt = true;
-		window.removeEventListener("click", o.onMouseClick);
 	}
 
 	o.init();
